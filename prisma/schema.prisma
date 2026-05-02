@@ -1,0 +1,116 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider  = "postgresql"
+  url       = env("DATABASE_URL")
+  directUrl = env("DIRECT_URL")
+}
+
+enum PipelineStage {
+  OPPORTUNITY
+  REACH_OUT_1
+  UPGRADE_APPROVED
+  UPGRADE_PREVIEW_SENT
+  UPGRADE_LIVE
+  BACKLINK_REQUIRED
+  BACKLINK_ACQUIRED
+  ON_HOLD
+  NO_RESPONSE
+  DECLINED_OFFER
+}
+
+enum DohGrade {
+  A
+  B
+  C
+  NA
+}
+
+enum ReminderStatus {
+  PENDING
+  DONE
+  SNOOZED
+}
+
+model Lead {
+  id                  String        @id @default(cuid())
+  businessName        String
+  businessType        String?
+  websiteUrl          String?       @unique
+  instagramUrl        String?       @unique
+  contactFirstName    String?
+  contactEmail        String?
+  phone               String?
+  address             String?
+  city                String?
+  neighborhood        String?
+  dietaryTags         String[]
+  dohGrade            DohGrade?
+  googleRating        Float?
+  googleReviewCount   Int?
+  domainRating        Int?
+  listingUrl          String?       @unique
+  verifiedBadge       Boolean       @default(false)
+  priorityPlacement   Boolean       @default(false)
+  photosRefreshed     Boolean       @default(false)
+  upgradedAt          DateTime?
+  pipelineStage       PipelineStage @default(OPPORTUNITY)
+  lastTemplateSent    String?
+  lastSentAt          DateTime?
+  backlinkUrl         String?
+  ownerTag            String        @default("sanket")
+  createdAt           DateTime      @default(now())
+  updatedAt           DateTime      @updatedAt
+  notes               Note[]
+  reminders           Reminder[]
+
+  @@index([pipelineStage])
+  @@index([neighborhood])
+  @@index([city])
+  @@index([businessType])
+}
+
+model Note {
+  id        String   @id @default(cuid())
+  leadId    String
+  body      String
+  createdAt DateTime @default(now())
+  lead      Lead     @relation(fields: [leadId], references: [id], onDelete: Cascade)
+
+  @@index([leadId])
+}
+
+model Reminder {
+  id        String         @id @default(cuid())
+  leadId    String
+  dueDate   DateTime
+  label     String?
+  status    ReminderStatus @default(PENDING)
+  createdAt DateTime       @default(now())
+  lead      Lead           @relation(fields: [leadId], references: [id], onDelete: Cascade)
+
+  @@index([leadId])
+  @@index([dueDate, status])
+}
+
+model Template {
+  id             String        @id @default(cuid())
+  name           String        @unique
+  stage          PipelineStage
+  body           String
+  isFirstMessage Boolean       @default(false)
+  order          Int           @default(0)
+  createdAt      DateTime      @default(now())
+  updatedAt      DateTime      @updatedAt
+}
+
+model Settings {
+  id                  String   @id @default("default")
+  senderFirstName     String   @default("Sanket")
+  defaultReminderDays Int      @default(4)
+  defaultOwnerTag     String   @default("sanket")
+  siteUrl             String   @default("https://www.eatrealfoodnyc.com")
+  updatedAt           DateTime @updatedAt
+}
