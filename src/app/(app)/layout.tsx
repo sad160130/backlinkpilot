@@ -1,5 +1,6 @@
 import { MapPin } from "lucide-react";
 import { NavTabs } from "./_components/NavTabs";
+import { logout } from "@/app/actions/auth";
 
 export default function AppLayout({
   children,
@@ -18,6 +19,14 @@ export default function AppLayout({
         <NavTabs />
 
         <div className="flex items-center gap-3">
+          <form action={logout}>
+            <button
+              type="submit"
+              className="text-white/60 text-sm hover:text-white transition-colors"
+            >
+              Sign Out
+            </button>
+          </form>
           <span className="bg-jade/20 text-sage rounded-full px-3 py-1 text-xs">
             Connected
           </span>
