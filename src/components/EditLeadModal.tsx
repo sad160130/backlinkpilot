@@ -1,10 +1,11 @@
 "use client";
 
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { createPortal } from "react-dom";
-import { X, Plus } from "lucide-react";
+import { X, Plus, Trash2 } from "lucide-react";
+import { formatDistanceToNow } from "date-fns";
 import { z } from "zod";
-import type { PipelineStage, DohGrade } from "@prisma/client";
+import type { PipelineStage, DohGrade, Note } from "@prisma/client";
 import { PIPELINE_STAGE_LABEL, PIPELINE_STAGE_ORDER } from "@/lib/pipeline";
 import {
   BUSINESS_TYPE_SUGGESTIONS,
@@ -18,6 +19,11 @@ import {
   updateLead,
 } from "@/app/actions/leads";
 import { getAllTemplates } from "@/app/actions/templates";
+import {
+  addNote,
+  deleteNote,
+  getNotesForLead,
+} from "@/app/actions/notes";
 
 type EditLeadModalProps = {
   leadId: string | null;
@@ -173,6 +179,145 @@ function formatDate(d: Date | null | undefined): string {
     month: "short",
     day: "numeric",
   });
+}
+
+function NotesTab({ leadId }: { leadId: string }) {
+  const [notes, setNotes] = useState<Note[]>([]);
+  const [body, setBody] = useState("");
+  const [loading, setLoading] = useState(true);
+  const [busy, setBusy] = useState(false);
+  const [err, setErr] = useState<string | null>(null);
+
+  const refresh = useCallback(async () => {
+    try {
+      const fresh = await getNotesForLead(leadId);
+      setNotes(fresh);
+    } catch (e) {
+      setErr(e instanceof Error ? e.message : "Failed to load notes");
+    }
+  }, [leadId]);
+
+  useEffect(() => {
+    let cancelled = false;
+    setLoading(true);
+    (async () => {
+      try {
+        const fresh = await getNotesForLead(leadId);
+        if (!cancelled) setNotes(fresh);
+      } catch (e) {
+        if (!cancelled) {
+          setErr(e instanceof Error ? e.message : "Failed to load notes");
+        }
+      } finally {
+        if (!cancelled) setLoading(false);
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [leadId]);
+
+  const trimmed = body.trim();
+  const canAdd = trimmed.length > 0 && !busy;
+
+  async function handleAdd() {
+    if (!canAdd) return;
+    setBusy(true);
+    try {
+      await addNote({ leadId, body: trimmed });
+      setBody("");
+      setErr(null);
+      await refresh();
+    } catch (e) {
+      setErr(e instanceof Error ? e.message : "Failed to add note");
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  async function handleDelete(noteId: string) {
+    if (!window.confirm("Delete this note?")) return;
+    setBusy(true);
+    try {
+      await deleteNote(noteId);
+      setErr(null);
+      await refresh();
+    } catch (e) {
+      setErr(e instanceof Error ? e.message : "Failed to delete note");
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  return (
+    <div className="space-y-4">
+      <div>
+        <textarea
+          rows={3}
+          className={inputCls}
+          placeholder="Add a note..."
+          value={body}
+          onChange={(e) => setBody(e.target.value)}
+        />
+        <div className="flex items-center justify-between mt-2">
+          <p className="text-xs text-gray-500">
+            Notes save instantly — no need to click Save Lead.
+          </p>
+          <button
+            type="button"
+            onClick={handleAdd}
+            disabled={!canAdd}
+            className="bg-jade text-white px-4 py-2 rounded-md text-sm font-medium hover:bg-forest transition disabled:opacity-50 disabled:cursor-not-allowed"
+          >
+            + Add Note
+          </button>
+        </div>
+      </div>
+
+      {err && (
+        <div className="rounded-md border border-red-300 bg-red-50 px-3 py-2 text-sm text-red-700">
+          {err}
+        </div>
+      )}
+
+      {loading ? (
+        <p className="text-sm text-gray-500">Loading notes…</p>
+      ) : notes.length === 0 ? (
+        <p className="text-center text-gray-400 text-sm py-8">
+          No notes yet — add one above.
+        </p>
+      ) : (
+        <div className="max-h-[400px] overflow-y-auto space-y-2">
+          {notes.map((note) => (
+            <div
+              key={note.id}
+              className="bg-cream/50 rounded-lg p-3 border border-cream group relative"
+            >
+              <p className="text-sm text-gray-800 whitespace-pre-wrap">
+                {note.body}
+              </p>
+              <div className="flex items-center justify-between mt-2">
+                <span className="text-xs text-gray-500">
+                  {formatDistanceToNow(new Date(note.createdAt), {
+                    addSuffix: true,
+                  })}
+                </span>
+                <button
+                  type="button"
+                  onClick={() => handleDelete(note.id)}
+                  disabled={busy}
+                  className="text-gray-400 hover:text-red-500 opacity-0 group-hover:opacity-100 transition"
+                  aria-label="Delete note"
+                >
+                  <Trash2 className="h-4 w-4" />
+                </button>
+              </div>
+            </div>
+          ))}
+        </div>
+      )}
+    </div>
+  );
 }
 
 export function EditLeadModal({ leadId, open, onClose }: EditLeadModalProps) {
@@ -786,9 +931,13 @@ export function EditLeadModal({ leadId, open, onClose }: EditLeadModalProps) {
                 </datalist>
               </>
             ) : activeTab === "notes" ? (
-              <p className="text-gray-500 text-sm">
-                Notes tab coming in next step.
-              </p>
+              leadId ? (
+                <NotesTab leadId={leadId} />
+              ) : (
+                <p className="text-gray-500 text-sm">
+                  Save the lead first before adding notes.
+                </p>
+              )
             ) : (
               <p className="text-gray-500 text-sm">
                 Reminder tab coming in next step.
