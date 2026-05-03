@@ -2,12 +2,19 @@ import { MapPin } from "lucide-react";
 import { Toaster } from "sonner";
 import { NavTabs } from "./_components/NavTabs";
 import { logout } from "@/app/actions/auth";
+import { prisma } from "@/lib/prisma";
+import { HeaderBell } from "@/components/HeaderBell";
+import { ReminderSync } from "@/components/ReminderSync";
 
-export default function AppLayout({
+export default async function AppLayout({
   children,
 }: {
   children: React.ReactNode;
 }) {
+  const dueCount = await prisma.reminder.count({
+    where: { status: "PENDING", dueDate: { lte: new Date() } },
+  });
+
   return (
     <div className="min-h-screen bg-cream">
       <header className="w-full bg-[#0B1A2E] text-white py-3 px-6 flex items-center justify-between">
@@ -28,6 +35,7 @@ export default function AppLayout({
               Sign Out
             </button>
           </form>
+          <HeaderBell dueCount={dueCount} />
           <span className="bg-jade/20 text-sage rounded-full px-3 py-1 text-xs">
             Connected
           </span>
@@ -39,6 +47,7 @@ export default function AppLayout({
 
       <main className="max-w-7xl mx-auto px-6 py-8">{children}</main>
 
+      <ReminderSync />
       <Toaster position="bottom-right" richColors />
     </div>
   );

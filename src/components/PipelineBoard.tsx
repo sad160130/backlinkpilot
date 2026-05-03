@@ -26,6 +26,7 @@ import { moveLead } from "@/app/actions/leads";
 
 type PipelineBoardProps = {
   leads: PipelineLead[];
+  initialOpenLeadId?: string | null;
 };
 
 const SEARCHABLE_FIELDS: Array<keyof PipelineLead> = [
@@ -83,7 +84,10 @@ function Column({
   );
 }
 
-export function PipelineBoard({ leads: leadsProp }: PipelineBoardProps) {
+export function PipelineBoard({
+  leads: leadsProp,
+  initialOpenLeadId = null,
+}: PipelineBoardProps) {
   const router = useRouter();
   const [searchQuery, setSearchQuery] = useState("");
   const [modalOpen, setModalOpen] = useState(false);
@@ -94,6 +98,13 @@ export function PipelineBoard({ leads: leadsProp }: PipelineBoardProps) {
   useEffect(() => {
     setLeads(leadsProp);
   }, [leadsProp]);
+
+  useEffect(() => {
+    if (initialOpenLeadId) {
+      setEditingLeadId(initialOpenLeadId);
+      setModalOpen(true);
+    }
+  }, [initialOpenLeadId]);
 
   const sensors = useSensors(
     useSensor(PointerSensor, {

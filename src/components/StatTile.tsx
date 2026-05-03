@@ -10,10 +10,13 @@ interface StatTileProps {
   value: number;
   accent?: Accent;
   href?: string;
+  active?: boolean;
 }
 
 const baseClasses =
   "block w-full text-left rounded-xl bg-white border-l-4 border-jade shadow-sm p-5 hover:bg-cream/50 cursor-pointer transition-colors";
+
+const activeClasses = "ring-2 ring-jade ring-offset-2 ring-offset-cream";
 
 function valueColor(accent: Accent, value: number): string {
   if (accent === "win") return "text-jade";
@@ -21,7 +24,13 @@ function valueColor(accent: Accent, value: number): string {
   return "text-forest";
 }
 
-export function StatTile({ label, value, accent = "default", href }: StatTileProps) {
+export function StatTile({
+  label,
+  value,
+  accent = "default",
+  href,
+  active = false,
+}: StatTileProps) {
   const content: ReactNode = (
     <>
       <div className={`text-3xl font-bold ${valueColor(accent, value)}`}>{value}</div>
@@ -29,16 +38,18 @@ export function StatTile({ label, value, accent = "default", href }: StatTilePro
     </>
   );
 
+  const className = active ? `${baseClasses} ${activeClasses}` : baseClasses;
+
   if (href) {
     return (
-      <Link href={href} className={baseClasses}>
+      <Link href={href} className={className}>
         {content}
       </Link>
     );
   }
 
   return (
-    <button type="button" onClick={() => {}} className={baseClasses}>
+    <button type="button" className={className}>
       {content}
     </button>
   );
