@@ -2,10 +2,17 @@
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { createPortal } from "react-dom";
-import { X, Plus, Trash2 } from "lucide-react";
+import { X, Plus, Trash2, Sparkles, AlertTriangle, Copy } from "lucide-react";
 import { format, formatDistanceToNow } from "date-fns";
+import { toast } from "sonner";
 import { z } from "zod";
-import type { PipelineStage, DohGrade, Note, Reminder } from "@prisma/client";
+import type {
+  PipelineStage,
+  DohGrade,
+  Note,
+  Reminder,
+  Template,
+} from "@prisma/client";
 import { PIPELINE_STAGE_LABEL, PIPELINE_STAGE_ORDER } from "@/lib/pipeline";
 import {
   BUSINESS_TYPE_SUGGESTIONS,
@@ -18,7 +25,12 @@ import {
   getLead,
   updateLead,
 } from "@/app/actions/leads";
-import { getAllTemplates } from "@/app/actions/templates";
+import {
+  getAllTemplates,
+  markTemplateSent,
+} from "@/app/actions/templates";
+import { getSettings } from "@/app/actions/settings";
+import { renderTemplate } from "@/lib/templates";
 import {
   addNote,
   deleteNote,
@@ -42,13 +54,7 @@ type EditLeadModalProps = {
   onClose: () => void;
 };
 
-type TemplateOption = {
-  id: string;
-  name: string;
-  stage: PipelineStage;
-  isFirstMessage: boolean;
-  order: number;
-};
+type TemplateOption = Template;
 
 type FormState = {
   businessName: string;
@@ -553,6 +559,9 @@ export function EditLeadModal({ leadId, open, onClose }: EditLeadModalProps) {
     useState<string[]>(BUSINESS_TYPE_SUGGESTIONS);
   const [templates, setTemplates] = useState<TemplateOption[]>([]);
   const [tagInput, setTagInput] = useState("");
+  const [senderFirstName, setSenderFirstName] = useState("Sanket");
+  const [selectedTemplateId, setSelectedTemplateId] = useState<string>("");
+  const [sending, setSending] = useState(false);
   const firstFieldRef = useRef<HTMLInputElement | null>(null);
 
   useEffect(() => {
@@ -560,20 +569,62 @@ export function EditLeadModal({ leadId, open, onClose }: EditLeadModalProps) {
   }, []);
 
   // Load data when opening
+  const refetchLead = useCallback(async () => {
+    if (!leadId) return;
+    const lead = await getLead(leadId);
+    if (!lead) return;
+    setForm({
+      businessName: lead.businessName ?? "",
+      businessType: lead.businessType ?? "",
+      websiteUrl: lead.websiteUrl ?? "",
+      instagramUrl: lead.instagramUrl ?? "",
+      contactFirstName: lead.contactFirstName ?? "",
+      contactEmail: lead.contactEmail ?? "",
+      phone: lead.phone ?? "",
+      address: lead.address ?? "",
+      city: lead.city ?? "",
+      neighborhood: lead.neighborhood ?? "",
+      dietaryTags: lead.dietaryTags ?? [],
+      dohGrade: lead.dohGrade ?? "",
+      googleRating:
+        lead.googleRating === null || lead.googleRating === undefined
+          ? ""
+          : String(lead.googleRating),
+      googleReviewCount:
+        lead.googleReviewCount === null || lead.googleReviewCount === undefined
+          ? ""
+          : String(lead.googleReviewCount),
+      domainRating:
+        lead.domainRating === null || lead.domainRating === undefined
+          ? ""
+          : String(lead.domainRating),
+      listingUrl: lead.listingUrl ?? "",
+      verifiedBadge: lead.verifiedBadge,
+      priorityPlacement: lead.priorityPlacement,
+      photosRefreshed: lead.photosRefreshed,
+      backlinkUrl: lead.backlinkUrl ?? "",
+      pipelineStage: lead.pipelineStage,
+      lastTemplateSent: lead.lastTemplateSent ?? "",
+    });
+    setUpgradedAt(lead.upgradedAt ?? null);
+  }, [leadId]);
+
   useEffect(() => {
     if (!open) return;
     setActiveTab("details");
     setError(null);
     setTagInput("");
+    setSelectedTemplateId("");
 
     let cancelled = false;
     setLoading(true);
 
     async function load() {
       try {
-        const [distinctTypes, allTemplates] = await Promise.all([
+        const [distinctTypes, allTemplates, settings] = await Promise.all([
           getDistinctBusinessTypes(),
           getAllTemplates(),
+          getSettings(),
         ]);
         if (cancelled) return;
 
@@ -582,47 +633,10 @@ export function EditLeadModal({ leadId, open, onClose }: EditLeadModalProps) {
         ).sort();
         setBusinessTypeOptions(merged);
         setTemplates(allTemplates);
+        setSenderFirstName(settings.senderFirstName);
 
         if (leadId) {
-          const lead = await getLead(leadId);
-          if (cancelled) return;
-          if (lead) {
-            setForm({
-              businessName: lead.businessName ?? "",
-              businessType: lead.businessType ?? "",
-              websiteUrl: lead.websiteUrl ?? "",
-              instagramUrl: lead.instagramUrl ?? "",
-              contactFirstName: lead.contactFirstName ?? "",
-              contactEmail: lead.contactEmail ?? "",
-              phone: lead.phone ?? "",
-              address: lead.address ?? "",
-              city: lead.city ?? "",
-              neighborhood: lead.neighborhood ?? "",
-              dietaryTags: lead.dietaryTags ?? [],
-              dohGrade: lead.dohGrade ?? "",
-              googleRating:
-                lead.googleRating === null || lead.googleRating === undefined
-                  ? ""
-                  : String(lead.googleRating),
-              googleReviewCount:
-                lead.googleReviewCount === null ||
-                lead.googleReviewCount === undefined
-                  ? ""
-                  : String(lead.googleReviewCount),
-              domainRating:
-                lead.domainRating === null || lead.domainRating === undefined
-                  ? ""
-                  : String(lead.domainRating),
-              listingUrl: lead.listingUrl ?? "",
-              verifiedBadge: lead.verifiedBadge,
-              priorityPlacement: lead.priorityPlacement,
-              photosRefreshed: lead.photosRefreshed,
-              backlinkUrl: lead.backlinkUrl ?? "",
-              pipelineStage: lead.pipelineStage,
-              lastTemplateSent: lead.lastTemplateSent ?? "",
-            });
-            setUpgradedAt(lead.upgradedAt ?? null);
-          }
+          await refetchLead();
         } else {
           setForm(EMPTY_FORM);
           setUpgradedAt(null);
@@ -640,7 +654,7 @@ export function EditLeadModal({ leadId, open, onClose }: EditLeadModalProps) {
     return () => {
       cancelled = true;
     };
-  }, [open, leadId]);
+  }, [open, leadId, refetchLead]);
 
   // Escape key closes modal
   useEffect(() => {
@@ -660,9 +674,79 @@ export function EditLeadModal({ leadId, open, onClose }: EditLeadModalProps) {
   }, [open, loading, activeTab]);
 
   const filteredTemplates = useMemo(
-    () => templates.filter((t) => t.stage === form.pipelineStage),
+    () =>
+      templates
+        .filter((t) => t.stage === form.pipelineStage)
+        .sort((a, b) => a.order - b.order),
     [templates, form.pipelineStage]
   );
+
+  // Reset generator selection if the chosen template is no longer in scope
+  useEffect(() => {
+    if (
+      selectedTemplateId &&
+      !filteredTemplates.some((t) => t.id === selectedTemplateId)
+    ) {
+      setSelectedTemplateId("");
+    }
+  }, [filteredTemplates, selectedTemplateId]);
+
+  const selectedTemplate = useMemo(
+    () => templates.find((t) => t.id === selectedTemplateId) ?? null,
+    [templates, selectedTemplateId]
+  );
+
+  const rendered = useMemo(() => {
+    if (!selectedTemplate) return null;
+    return renderTemplate(
+      selectedTemplate.body,
+      {
+        businessName: form.businessName,
+        contactFirstName: form.contactFirstName.trim() || null,
+        neighborhood: form.neighborhood.trim() || null,
+        city: form.city.trim() || null,
+        listingUrl: form.listingUrl.trim() || null,
+      },
+      senderFirstName
+    );
+  }, [
+    selectedTemplate,
+    form.businessName,
+    form.contactFirstName,
+    form.neighborhood,
+    form.city,
+    form.listingUrl,
+    senderFirstName,
+  ]);
+
+  async function handleCopyRendered() {
+    if (!rendered) return;
+    try {
+      await navigator.clipboard.writeText(rendered.text);
+      toast.success("Copied to clipboard.");
+    } catch {
+      toast.error("Failed to copy.");
+    }
+  }
+
+  async function handleMarkSent() {
+    if (!leadId || !selectedTemplate) return;
+    setSending(true);
+    try {
+      const result = await markTemplateSent(leadId, selectedTemplate.name);
+      toast.success(
+        `Marked as sent. Reminder set for ${format(
+          new Date(result.reminderDueDate),
+          "EEEE, MMMM d"
+        )}.`
+      );
+      await refetchLead();
+    } catch (e) {
+      toast.error(e instanceof Error ? e.message : "Failed to mark as sent");
+    } finally {
+      setSending(false);
+    }
+  }
 
   function setField<K extends keyof FormState>(key: K, value: FormState[K]) {
     setForm((prev) => ({ ...prev, [key]: value }));
@@ -1148,6 +1232,79 @@ export function EditLeadModal({ leadId, open, onClose }: EditLeadModalProps) {
                     <option key={opt} value={opt} />
                   ))}
                 </datalist>
+
+                <section className="mt-8 pt-6 border-t border-gray-200">
+                  <div className="flex items-center gap-2 mb-3">
+                    <Sparkles className="h-4 w-4 text-jade" />
+                    <h3 className="text-xs font-semibold uppercase tracking-wide text-jade">
+                      Prompt &amp; Template Generator
+                    </h3>
+                  </div>
+
+                  {leadId ? (
+                    <>
+                      <select
+                        className={inputCls}
+                        value={selectedTemplateId}
+                        onChange={(e) => setSelectedTemplateId(e.target.value)}
+                      >
+                        <option value="">
+                          Select a template or prompt...
+                        </option>
+                        {filteredTemplates.map((t) => (
+                          <option key={t.id} value={t.id}>
+                            {t.name}
+                          </option>
+                        ))}
+                      </select>
+
+                      {selectedTemplate && rendered && (
+                        <>
+                          <div className="mt-3 bg-cream/40 border border-cream rounded-lg p-4">
+                            <pre className="whitespace-pre-wrap font-sans text-sm text-gray-800">
+                              {rendered.text}
+                            </pre>
+                            {rendered.hasUnfilledVariables && (
+                              <div className="mt-3 flex items-center gap-2 text-xs text-amber">
+                                <AlertTriangle className="h-3 w-3" />
+                                <span>
+                                  Used fallbacks for:{" "}
+                                  {rendered.unfilledList.join(", ")}. Fill these
+                                  fields in the form above for better
+                                  personalization.
+                                </span>
+                              </div>
+                            )}
+                          </div>
+
+                          <div className="flex gap-2 mt-3">
+                            <button
+                              type="button"
+                              onClick={handleCopyRendered}
+                              disabled={!selectedTemplate}
+                              className="px-4 py-2 rounded-md border border-gray-300 text-sm text-gray-700 hover:bg-gray-50 flex items-center gap-2 disabled:opacity-50"
+                            >
+                              <Copy className="h-4 w-4" />
+                              Copy
+                            </button>
+                            <button
+                              type="button"
+                              onClick={handleMarkSent}
+                              disabled={!selectedTemplate || sending}
+                              className="bg-jade text-white px-4 py-2 rounded-md text-sm font-medium hover:bg-forest transition disabled:opacity-50 disabled:cursor-not-allowed"
+                            >
+                              {sending ? "Sending…" : "Mark as Sent"}
+                            </button>
+                          </div>
+                        </>
+                      )}
+                    </>
+                  ) : (
+                    <p className="text-sm text-gray-500">
+                      Save the lead first to use the template generator.
+                    </p>
+                  )}
+                </section>
               </>
             ) : activeTab === "notes" ? (
               leadId ? (

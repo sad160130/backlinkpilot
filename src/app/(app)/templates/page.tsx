@@ -1,3 +1,9 @@
-export default function TemplatesPage() {
-  return <h1 className="text-3xl font-bold text-forest">Templates (coming)</h1>;
+import { getAllTemplates } from "@/app/actions/templates";
+import { TemplatesClient } from "@/components/TemplatesClient";
+
+export const revalidate = 0;
+
+export default async function TemplatesPage() {
+  const templates = await getAllTemplates();
+  return <TemplatesClient templates={templates} />;
 }

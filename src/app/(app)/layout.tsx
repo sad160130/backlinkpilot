@@ -1,4 +1,5 @@
 import { MapPin } from "lucide-react";
+import { Toaster } from "sonner";
 import { NavTabs } from "./_components/NavTabs";
 import { logout } from "@/app/actions/auth";
 
@@ -37,6 +38,8 @@ export default function AppLayout({
       </header>
 
       <main className="max-w-7xl mx-auto px-6 py-8">{children}</main>
+
+      <Toaster position="bottom-right" richColors />
     </div>
   );
 }
