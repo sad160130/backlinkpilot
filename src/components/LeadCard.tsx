@@ -1,6 +1,8 @@
 "use client";
 
 import { AlertTriangle, CheckCircle2, Mail } from "lucide-react";
+import { useDraggable } from "@dnd-kit/core";
+import { CSS } from "@dnd-kit/utilities";
 import { parseInstagramHandle } from "@/lib/pipeline";
 
 function InstagramIcon({ className }: { className?: string }) {
@@ -77,6 +79,9 @@ function ChannelIndicator({
 }
 
 export function LeadCard({ lead, onOpen }: LeadCardProps) {
+  const { attributes, listeners, setNodeRef, transform, isDragging } =
+    useDraggable({ id: lead.id });
+
   const now = Date.now();
   const hasOverdue = lead.reminders.some(
     (r) => r.status === "PENDING" && r.dueDate.getTime() <= now
@@ -84,10 +89,24 @@ export function LeadCard({ lead, onOpen }: LeadCardProps) {
 
   const baseClass =
     "w-full text-left bg-white rounded-lg shadow-sm border border-transparent hover:border-jade/30 transition p-3 space-y-1.5 cursor-pointer";
-  const className = hasOverdue ? `${baseClass} ring-2 ring-purple-400` : baseClass;
+  const ringClass = hasOverdue ? " ring-2 ring-purple-400" : "";
+  const dragClass = isDragging ? " opacity-30" : "";
+  const className = `${baseClass}${ringClass}${dragClass}`;
+
+  const style = transform
+    ? { transform: CSS.Translate.toString(transform) }
+    : undefined;
 
   return (
-    <button type="button" onClick={() => onOpen?.(lead.id)} className={className}>
+    <button
+      ref={setNodeRef}
+      type="button"
+      onClick={() => onOpen?.(lead.id)}
+      className={className}
+      style={style}
+      {...attributes}
+      {...listeners}
+    >
       <div className="flex items-start justify-between gap-2">
         <div className="font-bold text-forest leading-tight">{lead.businessName}</div>
         {lead.verifiedBadge && (

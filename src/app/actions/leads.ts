@@ -89,3 +89,19 @@ export async function deleteLead(id: string) {
   revalidatePath("/pipeline");
   revalidatePath("/all-leads");
 }
+
+const moveLeadSchema = z.object({
+  leadId: z.string().min(1),
+  newStage: z.nativeEnum(PipelineStage),
+});
+
+export async function moveLead(input: unknown) {
+  const data = moveLeadSchema.parse(input);
+  const lead = await prisma.lead.update({
+    where: { id: data.leadId },
+    data: { pipelineStage: data.newStage },
+  });
+  revalidatePath("/pipeline");
+  revalidatePath("/all-leads");
+  return lead;
+}

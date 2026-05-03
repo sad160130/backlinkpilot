@@ -1,7 +1,18 @@
 "use client";
 
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { useRouter } from "next/navigation";
+import {
+  DndContext,
+  PointerSensor,
+  useSensor,
+  useSensors,
+  useDroppable,
+  DragOverlay,
+  type DragEndEvent,
+  type DragStartEvent,
+} from "@dnd-kit/core";
+import { toast } from "sonner";
 import type { PipelineStage } from "@prisma/client";
 import {
   PIPELINE_STAGE_LABEL,
@@ -11,6 +22,7 @@ import {
 import { LeadCard } from "./LeadCard";
 import { PipelineSearch } from "./PipelineSearch";
 import { EditLeadModal } from "./EditLeadModal";
+import { moveLead } from "@/app/actions/leads";
 
 type PipelineBoardProps = {
   leads: PipelineLead[];
@@ -46,8 +58,13 @@ function Column({
   leads: PipelineLead[];
   onOpen: (leadId: string) => void;
 }) {
+  const { setNodeRef, isOver } = useDroppable({ id: stage });
+  const className = `w-[280px] flex-shrink-0 bg-cream/60 rounded-lg p-3 space-y-2 transition ${
+    isOver ? "ring-2 ring-jade ring-offset-2 ring-offset-cream" : ""
+  }`;
+
   return (
-    <div className="w-[280px] flex-shrink-0 bg-cream/60 rounded-lg p-3 space-y-2">
+    <div ref={setNodeRef} className={className}>
       <div className="flex items-center justify-between mb-2">
         <span className="uppercase tracking-wide text-xs font-semibold text-forest">
           {PIPELINE_STAGE_LABEL[stage]}
@@ -66,11 +83,23 @@ function Column({
   );
 }
 
-export function PipelineBoard({ leads }: PipelineBoardProps) {
+export function PipelineBoard({ leads: leadsProp }: PipelineBoardProps) {
   const router = useRouter();
   const [searchQuery, setSearchQuery] = useState("");
   const [modalOpen, setModalOpen] = useState(false);
   const [editingLeadId, setEditingLeadId] = useState<string | null>(null);
+  const [leads, setLeads] = useState<PipelineLead[]>(leadsProp);
+  const [activeDragLeadId, setActiveDragLeadId] = useState<string | null>(null);
+
+  useEffect(() => {
+    setLeads(leadsProp);
+  }, [leadsProp]);
+
+  const sensors = useSensors(
+    useSensor(PointerSensor, {
+      activationConstraint: { distance: 5 },
+    })
+  );
 
   const byStage = useMemo(() => {
     const q = searchQuery.trim().toLowerCase();
@@ -103,21 +132,67 @@ export function PipelineBoard({ leads }: PipelineBoardProps) {
     router.refresh();
   }
 
+  function handleDragStart(event: DragStartEvent) {
+    setActiveDragLeadId(event.active.id as string);
+  }
+
+  async function handleDragEnd(event: DragEndEvent) {
+    setActiveDragLeadId(null);
+    const leadId = event.active.id as string;
+    const newStage = event.over?.id as PipelineStage | undefined;
+    if (!newStage) return;
+
+    const previous = leads;
+    const currentLead = previous.find((l) => l.id === leadId);
+    if (!currentLead || currentLead.pipelineStage === newStage) return;
+
+    setLeads(
+      previous.map((l) =>
+        l.id === leadId ? { ...l, pipelineStage: newStage } : l
+      )
+    );
+
+    try {
+      await moveLead({ leadId, newStage });
+    } catch (err) {
+      setLeads(previous);
+      toast.error(err instanceof Error ? err.message : "Failed to move lead");
+    }
+  }
+
+  const draggingLead = activeDragLeadId
+    ? leads.find((l) => l.id === activeDragLeadId)
+    : null;
+
   return (
     <div className="space-y-4">
       <PipelineSearch value={searchQuery} onChange={setSearchQuery} />
-      <div className="overflow-x-auto -mx-6 px-6">
-        <div className="flex gap-4" style={{ minWidth: "max-content" }}>
-          {PIPELINE_STAGE_ORDER.map((stage) => (
-            <Column
-              key={stage}
-              stage={stage}
-              leads={byStage[stage] ?? []}
-              onOpen={openLead}
-            />
-          ))}
+      <DndContext
+        sensors={sensors}
+        onDragStart={handleDragStart}
+        onDragEnd={handleDragEnd}
+      >
+        <div className="overflow-x-auto -mx-6 px-6">
+          <div className="flex gap-4" style={{ minWidth: "max-content" }}>
+            {PIPELINE_STAGE_ORDER.map((stage) => (
+              <Column
+                key={stage}
+                stage={stage}
+                leads={byStage[stage] ?? []}
+                onOpen={openLead}
+              />
+            ))}
+          </div>
         </div>
-      </div>
+
+        <DragOverlay>
+          {draggingLead && (
+            <div className="opacity-90 rotate-2 shadow-2xl">
+              <LeadCard lead={draggingLead} />
+            </div>
+          )}
+        </DragOverlay>
+      </DndContext>
 
       <EditLeadModal
         leadId={editingLeadId}
