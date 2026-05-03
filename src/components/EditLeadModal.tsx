@@ -1,0 +1,833 @@
+"use client";
+
+import { useEffect, useMemo, useRef, useState } from "react";
+import { createPortal } from "react-dom";
+import { X, Plus } from "lucide-react";
+import { z } from "zod";
+import type { PipelineStage, DohGrade } from "@prisma/client";
+import { PIPELINE_STAGE_LABEL, PIPELINE_STAGE_ORDER } from "@/lib/pipeline";
+import {
+  BUSINESS_TYPE_SUGGESTIONS,
+  DIETARY_TAG_SUGGESTIONS,
+} from "@/lib/business-types";
+import {
+  createLead,
+  deleteLead,
+  getDistinctBusinessTypes,
+  getLead,
+  updateLead,
+} from "@/app/actions/leads";
+import { getAllTemplates } from "@/app/actions/templates";
+
+type EditLeadModalProps = {
+  leadId: string | null;
+  open: boolean;
+  onClose: () => void;
+};
+
+type TemplateOption = {
+  id: string;
+  name: string;
+  stage: PipelineStage;
+  isFirstMessage: boolean;
+  order: number;
+};
+
+type FormState = {
+  businessName: string;
+  businessType: string;
+  websiteUrl: string;
+  instagramUrl: string;
+  contactFirstName: string;
+  contactEmail: string;
+  phone: string;
+  address: string;
+  city: string;
+  neighborhood: string;
+  dietaryTags: string[];
+  dohGrade: DohGrade | "";
+  googleRating: string;
+  googleReviewCount: string;
+  domainRating: string;
+  listingUrl: string;
+  verifiedBadge: boolean;
+  priorityPlacement: boolean;
+  photosRefreshed: boolean;
+  backlinkUrl: string;
+  pipelineStage: PipelineStage;
+  lastTemplateSent: string;
+};
+
+const EMPTY_FORM: FormState = {
+  businessName: "",
+  businessType: "",
+  websiteUrl: "",
+  instagramUrl: "",
+  contactFirstName: "",
+  contactEmail: "",
+  phone: "",
+  address: "",
+  city: "",
+  neighborhood: "",
+  dietaryTags: [],
+  dohGrade: "",
+  googleRating: "",
+  googleReviewCount: "",
+  domainRating: "",
+  listingUrl: "",
+  verifiedBadge: false,
+  priorityPlacement: false,
+  photosRefreshed: false,
+  backlinkUrl: "",
+  pipelineStage: "OPPORTUNITY",
+  lastTemplateSent: "",
+};
+
+const inputCls =
+  "w-full rounded-md border border-gray-300 px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-jade/40 focus:border-jade";
+
+function cn(...parts: Array<string | false | null | undefined>): string {
+  return parts.filter(Boolean).join(" ");
+}
+
+function Field({ label, children }: { label: string; children: React.ReactNode }) {
+  return (
+    <label className="block">
+      <span className="block text-xs font-medium uppercase tracking-wide text-gray-500 mb-1">
+        {label}
+      </span>
+      {children}
+    </label>
+  );
+}
+
+function Toggle({
+  value,
+  onChange,
+}: {
+  value: boolean;
+  onChange: (v: boolean) => void;
+}) {
+  return (
+    <button
+      type="button"
+      onClick={() => onChange(!value)}
+      className={cn(
+        "relative inline-flex h-6 w-11 items-center rounded-full transition",
+        value ? "bg-jade" : "bg-gray-300"
+      )}
+    >
+      <span
+        className={cn(
+          "inline-block h-4 w-4 transform rounded-full bg-white transition",
+          value ? "translate-x-6" : "translate-x-1"
+        )}
+      />
+    </button>
+  );
+}
+
+const clientLeadSchema = z.object({
+  businessName: z.string().trim().min(1, "Business name is required"),
+  websiteUrl: z.string().trim().url("Website URL is invalid").or(z.literal("")),
+  instagramUrl: z.string().trim().url("Instagram URL is invalid").or(z.literal("")),
+  contactEmail: z.string().trim().email("Contact email is invalid").or(z.literal("")),
+  listingUrl: z.string().trim().url("Listing URL is invalid").or(z.literal("")),
+  backlinkUrl: z.string().trim().url("Backlink URL is invalid").or(z.literal("")),
+  googleRating: z
+    .number()
+    .min(0, "Google rating must be 0–5")
+    .max(5, "Google rating must be 0–5")
+    .nullable(),
+  googleReviewCount: z.number().int().min(0, "Review count must be ≥ 0").nullable(),
+  domainRating: z
+    .number()
+    .int()
+    .min(0, "Domain rating must be 0–100")
+    .max(100, "Domain rating must be 0–100")
+    .nullable(),
+});
+
+function parseNullableNumber(raw: string): number | null {
+  if (raw.trim() === "") return null;
+  const n = Number(raw);
+  return Number.isFinite(n) ? n : null;
+}
+
+function parseNullableInt(raw: string): number | null {
+  if (raw.trim() === "") return null;
+  const n = parseInt(raw, 10);
+  return Number.isFinite(n) ? n : null;
+}
+
+function emptyToNull(s: string): string | null {
+  const t = s.trim();
+  return t === "" ? null : t;
+}
+
+function formatDate(d: Date | null | undefined): string {
+  if (!d) return "";
+  const date = typeof d === "string" ? new Date(d) : d;
+  return date.toLocaleDateString(undefined, {
+    year: "numeric",
+    month: "short",
+    day: "numeric",
+  });
+}
+
+export function EditLeadModal({ leadId, open, onClose }: EditLeadModalProps) {
+  const [mounted, setMounted] = useState(false);
+  const [activeTab, setActiveTab] = useState<"details" | "notes" | "reminder">(
+    "details"
+  );
+  const [form, setForm] = useState<FormState>(EMPTY_FORM);
+  const [loading, setLoading] = useState(false);
+  const [saving, setSaving] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const [upgradedAt, setUpgradedAt] = useState<Date | null>(null);
+  const [businessTypeOptions, setBusinessTypeOptions] =
+    useState<string[]>(BUSINESS_TYPE_SUGGESTIONS);
+  const [templates, setTemplates] = useState<TemplateOption[]>([]);
+  const [tagInput, setTagInput] = useState("");
+  const firstFieldRef = useRef<HTMLInputElement | null>(null);
+
+  useEffect(() => {
+    setMounted(true);
+  }, []);
+
+  // Load data when opening
+  useEffect(() => {
+    if (!open) return;
+    setActiveTab("details");
+    setError(null);
+    setTagInput("");
+
+    let cancelled = false;
+    setLoading(true);
+
+    async function load() {
+      try {
+        const [distinctTypes, allTemplates] = await Promise.all([
+          getDistinctBusinessTypes(),
+          getAllTemplates(),
+        ]);
+        if (cancelled) return;
+
+        const merged = Array.from(
+          new Set([...BUSINESS_TYPE_SUGGESTIONS, ...distinctTypes])
+        ).sort();
+        setBusinessTypeOptions(merged);
+        setTemplates(allTemplates);
+
+        if (leadId) {
+          const lead = await getLead(leadId);
+          if (cancelled) return;
+          if (lead) {
+            setForm({
+              businessName: lead.businessName ?? "",
+              businessType: lead.businessType ?? "",
+              websiteUrl: lead.websiteUrl ?? "",
+              instagramUrl: lead.instagramUrl ?? "",
+              contactFirstName: lead.contactFirstName ?? "",
+              contactEmail: lead.contactEmail ?? "",
+              phone: lead.phone ?? "",
+              address: lead.address ?? "",
+              city: lead.city ?? "",
+              neighborhood: lead.neighborhood ?? "",
+              dietaryTags: lead.dietaryTags ?? [],
+              dohGrade: lead.dohGrade ?? "",
+              googleRating:
+                lead.googleRating === null || lead.googleRating === undefined
+                  ? ""
+                  : String(lead.googleRating),
+              googleReviewCount:
+                lead.googleReviewCount === null ||
+                lead.googleReviewCount === undefined
+                  ? ""
+                  : String(lead.googleReviewCount),
+              domainRating:
+                lead.domainRating === null || lead.domainRating === undefined
+                  ? ""
+                  : String(lead.domainRating),
+              listingUrl: lead.listingUrl ?? "",
+              verifiedBadge: lead.verifiedBadge,
+              priorityPlacement: lead.priorityPlacement,
+              photosRefreshed: lead.photosRefreshed,
+              backlinkUrl: lead.backlinkUrl ?? "",
+              pipelineStage: lead.pipelineStage,
+              lastTemplateSent: lead.lastTemplateSent ?? "",
+            });
+            setUpgradedAt(lead.upgradedAt ?? null);
+          }
+        } else {
+          setForm(EMPTY_FORM);
+          setUpgradedAt(null);
+        }
+      } catch (e) {
+        if (!cancelled) {
+          setError(e instanceof Error ? e.message : "Failed to load lead");
+        }
+      } finally {
+        if (!cancelled) setLoading(false);
+      }
+    }
+
+    load();
+    return () => {
+      cancelled = true;
+    };
+  }, [open, leadId]);
+
+  // Escape key closes modal
+  useEffect(() => {
+    if (!open) return;
+    function onKey(e: KeyboardEvent) {
+      if (e.key === "Escape") onClose();
+    }
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, [open, onClose]);
+
+  // Focus first field when content shows
+  useEffect(() => {
+    if (open && !loading && activeTab === "details") {
+      firstFieldRef.current?.focus();
+    }
+  }, [open, loading, activeTab]);
+
+  const filteredTemplates = useMemo(
+    () => templates.filter((t) => t.stage === form.pipelineStage),
+    [templates, form.pipelineStage]
+  );
+
+  function setField<K extends keyof FormState>(key: K, value: FormState[K]) {
+    setForm((prev) => ({ ...prev, [key]: value }));
+  }
+
+  function addTag(raw: string) {
+    const tag = raw.trim();
+    if (!tag) return;
+    setForm((prev) =>
+      prev.dietaryTags.includes(tag)
+        ? prev
+        : { ...prev, dietaryTags: [...prev.dietaryTags, tag] }
+    );
+  }
+
+  function removeTag(tag: string) {
+    setForm((prev) => ({
+      ...prev,
+      dietaryTags: prev.dietaryTags.filter((t) => t !== tag),
+    }));
+  }
+
+  function buildPayload() {
+    return {
+      businessName: form.businessName.trim(),
+      businessType: emptyToNull(form.businessType),
+      websiteUrl: form.websiteUrl.trim() === "" ? null : form.websiteUrl.trim(),
+      instagramUrl:
+        form.instagramUrl.trim() === "" ? null : form.instagramUrl.trim(),
+      contactFirstName: emptyToNull(form.contactFirstName),
+      contactEmail:
+        form.contactEmail.trim() === "" ? null : form.contactEmail.trim(),
+      phone: emptyToNull(form.phone),
+      address: emptyToNull(form.address),
+      city: emptyToNull(form.city),
+      neighborhood: emptyToNull(form.neighborhood),
+      dietaryTags: form.dietaryTags,
+      dohGrade: form.dohGrade === "" ? null : form.dohGrade,
+      googleRating: parseNullableNumber(form.googleRating),
+      googleReviewCount: parseNullableInt(form.googleReviewCount),
+      domainRating: parseNullableInt(form.domainRating),
+      listingUrl:
+        form.listingUrl.trim() === "" ? null : form.listingUrl.trim(),
+      verifiedBadge: form.verifiedBadge,
+      priorityPlacement: form.priorityPlacement,
+      photosRefreshed: form.photosRefreshed,
+      backlinkUrl:
+        form.backlinkUrl.trim() === "" ? null : form.backlinkUrl.trim(),
+      pipelineStage: form.pipelineStage,
+      lastTemplateSent: emptyToNull(form.lastTemplateSent),
+    };
+  }
+
+  function clientValidate(): string | null {
+    const result = clientLeadSchema.safeParse({
+      businessName: form.businessName,
+      websiteUrl: form.websiteUrl.trim(),
+      instagramUrl: form.instagramUrl.trim(),
+      contactEmail: form.contactEmail.trim(),
+      listingUrl: form.listingUrl.trim(),
+      backlinkUrl: form.backlinkUrl.trim(),
+      googleRating: parseNullableNumber(form.googleRating),
+      googleReviewCount: parseNullableInt(form.googleReviewCount),
+      domainRating: parseNullableInt(form.domainRating),
+    });
+    if (!result.success) {
+      return result.error.issues[0]?.message ?? "Form is invalid";
+    }
+    return null;
+  }
+
+  async function handleSave() {
+    setError(null);
+    const errMsg = clientValidate();
+    if (errMsg) {
+      setError(errMsg);
+      return;
+    }
+    setSaving(true);
+    try {
+      const payload = buildPayload();
+      if (leadId) {
+        await updateLead(leadId, payload);
+      } else {
+        await createLead(payload);
+      }
+      onClose();
+    } catch (e) {
+      setError(e instanceof Error ? e.message : "Failed to save lead");
+    } finally {
+      setSaving(false);
+    }
+  }
+
+  async function handleDelete() {
+    if (!leadId) return;
+    if (!window.confirm("Delete this lead? This cannot be undone.")) return;
+    setSaving(true);
+    try {
+      await deleteLead(leadId);
+      onClose();
+    } catch (e) {
+      setError(e instanceof Error ? e.message : "Failed to delete lead");
+      setSaving(false);
+    }
+  }
+
+  if (!open || !mounted) return null;
+
+  const title = leadId ? "Edit Lead" : "New Lead";
+
+  const tabBtn = (key: typeof activeTab, label: string) => (
+    <button
+      type="button"
+      onClick={() => setActiveTab(key)}
+      className={cn(
+        "py-3",
+        activeTab === key
+          ? "text-jade font-medium border-b-2 border-jade -mb-px"
+          : "text-gray-500 hover:text-gray-700"
+      )}
+    >
+      {label}
+    </button>
+  );
+
+  const remainingTagSuggestions = DIETARY_TAG_SUGGESTIONS.filter(
+    (s) => !form.dietaryTags.includes(s)
+  );
+
+  const modal = (
+    <>
+      <div
+        className="fixed inset-0 bg-slate-900/60 z-40"
+        onClick={onClose}
+        aria-hidden="true"
+      />
+      <div className="fixed inset-0 z-50 flex items-center justify-center p-4 pointer-events-none">
+        <div
+          role="dialog"
+          aria-modal="true"
+          aria-label={title}
+          className="pointer-events-auto bg-white rounded-xl shadow-2xl w-full max-w-3xl max-h-[85vh] flex flex-col"
+        >
+          <div className="sticky top-0 p-5 border-b flex items-center justify-between bg-white rounded-t-xl">
+            <h2 className="text-xl font-bold text-forest">{title}</h2>
+            <button
+              type="button"
+              onClick={onClose}
+              className="text-gray-400 hover:text-gray-600"
+              aria-label="Close"
+            >
+              <X className="h-5 w-5" />
+            </button>
+          </div>
+
+          <div className="border-b flex gap-6 px-5">
+            {tabBtn("details", "Details")}
+            {tabBtn("notes", "Notes")}
+            {tabBtn("reminder", "Reminder")}
+          </div>
+
+          <div className="flex-1 overflow-y-auto p-5">
+            {loading ? (
+              <p className="text-sm text-gray-500">Loading…</p>
+            ) : activeTab === "details" ? (
+              <>
+                {error && (
+                  <div className="mb-4 rounded-md border border-red-300 bg-red-50 px-3 py-2 text-sm text-red-700">
+                    {error}
+                  </div>
+                )}
+
+                <div className="grid md:grid-cols-2 gap-x-4 gap-y-4">
+                  <Field label="Business Name *">
+                    <input
+                      ref={firstFieldRef}
+                      type="text"
+                      required
+                      className={inputCls}
+                      value={form.businessName}
+                      onChange={(e) => setField("businessName", e.target.value)}
+                    />
+                  </Field>
+
+                  <Field label="Business Type">
+                    <input
+                      type="text"
+                      list="business-types-list"
+                      className={inputCls}
+                      value={form.businessType}
+                      onChange={(e) => setField("businessType", e.target.value)}
+                    />
+                  </Field>
+
+                  <Field label="Website URL">
+                    <input
+                      type="url"
+                      className={inputCls}
+                      value={form.websiteUrl}
+                      onChange={(e) => setField("websiteUrl", e.target.value)}
+                    />
+                  </Field>
+
+                  <Field label="First Name">
+                    <input
+                      type="text"
+                      className={inputCls}
+                      value={form.contactFirstName}
+                      onChange={(e) =>
+                        setField("contactFirstName", e.target.value)
+                      }
+                    />
+                  </Field>
+
+                  <Field label="City / Borough">
+                    <input
+                      type="text"
+                      className={inputCls}
+                      value={form.city}
+                      onChange={(e) => setField("city", e.target.value)}
+                    />
+                  </Field>
+
+                  <Field label="Neighborhood">
+                    <input
+                      type="text"
+                      className={inputCls}
+                      value={form.neighborhood}
+                      onChange={(e) => setField("neighborhood", e.target.value)}
+                    />
+                  </Field>
+
+                  <Field label="Domain Rating">
+                    <input
+                      type="number"
+                      min={0}
+                      max={100}
+                      className={inputCls}
+                      value={form.domainRating}
+                      onChange={(e) => setField("domainRating", e.target.value)}
+                    />
+                  </Field>
+
+                  <Field label="DOH Grade">
+                    <select
+                      className={inputCls}
+                      value={form.dohGrade}
+                      onChange={(e) =>
+                        setField(
+                          "dohGrade",
+                          (e.target.value as DohGrade | "") || ""
+                        )
+                      }
+                    >
+                      <option value="">—</option>
+                      <option value="A">A</option>
+                      <option value="B">B</option>
+                      <option value="C">C</option>
+                      <option value="NA">NA</option>
+                    </select>
+                  </Field>
+
+                  <div className="md:col-span-2">
+                    <Field label="Instagram URL">
+                      <input
+                        type="url"
+                        className={inputCls}
+                        value={form.instagramUrl}
+                        onChange={(e) =>
+                          setField("instagramUrl", e.target.value)
+                        }
+                      />
+                    </Field>
+                  </div>
+
+                  <Field label="Contact Email">
+                    <input
+                      type="email"
+                      className={inputCls}
+                      value={form.contactEmail}
+                      onChange={(e) => setField("contactEmail", e.target.value)}
+                    />
+                  </Field>
+
+                  <Field label="Phone">
+                    <input
+                      type="tel"
+                      className={inputCls}
+                      value={form.phone}
+                      onChange={(e) => setField("phone", e.target.value)}
+                    />
+                  </Field>
+
+                  <div className="md:col-span-2">
+                    <Field label="Address">
+                      <input
+                        type="text"
+                        className={inputCls}
+                        value={form.address}
+                        onChange={(e) => setField("address", e.target.value)}
+                      />
+                    </Field>
+                  </div>
+
+                  <div className="md:col-span-2">
+                    <Field label="Dietary Tags">
+                      <div className="space-y-2">
+                        {form.dietaryTags.length > 0 && (
+                          <div className="flex flex-wrap gap-1.5">
+                            {form.dietaryTags.map((tag) => (
+                              <span
+                                key={tag}
+                                className="bg-jade/10 text-jade rounded-full px-2 py-0.5 text-xs flex items-center gap-1"
+                              >
+                                {tag}
+                                <button
+                                  type="button"
+                                  onClick={() => removeTag(tag)}
+                                  aria-label={`Remove ${tag}`}
+                                  className="hover:text-forest"
+                                >
+                                  <X className="h-3 w-3" />
+                                </button>
+                              </span>
+                            ))}
+                          </div>
+                        )}
+                        <input
+                          type="text"
+                          className={inputCls}
+                          placeholder="Type a tag and press Enter"
+                          value={tagInput}
+                          onChange={(e) => setTagInput(e.target.value)}
+                          onKeyDown={(e) => {
+                            if (e.key === "Enter") {
+                              e.preventDefault();
+                              addTag(tagInput);
+                              setTagInput("");
+                            }
+                          }}
+                        />
+                        {remainingTagSuggestions.length > 0 && (
+                          <div className="flex gap-1.5 overflow-x-auto pb-1">
+                            {remainingTagSuggestions.map((s) => (
+                              <button
+                                key={s}
+                                type="button"
+                                onClick={() => addTag(s)}
+                                className="bg-gray-100 hover:bg-gray-200 text-gray-700 rounded-full px-2 py-0.5 text-xs whitespace-nowrap flex items-center gap-1"
+                              >
+                                <Plus className="h-3 w-3" />
+                                {s}
+                              </button>
+                            ))}
+                          </div>
+                        )}
+                      </div>
+                    </Field>
+                  </div>
+
+                  <Field label="Google Rating">
+                    <input
+                      type="number"
+                      step={0.1}
+                      min={0}
+                      max={5}
+                      className={inputCls}
+                      value={form.googleRating}
+                      onChange={(e) => setField("googleRating", e.target.value)}
+                    />
+                  </Field>
+
+                  <Field label="Google Review Count">
+                    <input
+                      type="number"
+                      min={0}
+                      className={inputCls}
+                      value={form.googleReviewCount}
+                      onChange={(e) =>
+                        setField("googleReviewCount", e.target.value)
+                      }
+                    />
+                  </Field>
+
+                  <div className="md:col-span-2">
+                    <Field label="Listing URL">
+                      <input
+                        type="url"
+                        className={inputCls}
+                        value={form.listingUrl}
+                        onChange={(e) => setField("listingUrl", e.target.value)}
+                      />
+                    </Field>
+                    <p className="text-xs text-gray-500 mt-1">
+                      The URL of this restaurant&apos;s existing listing on
+                      eatrealfoodnyc.com. Used in templates as{" "}
+                      {"{{listingUrl}}"}.
+                    </p>
+                  </div>
+
+                  <Field label="Verified Badge">
+                    <Toggle
+                      value={form.verifiedBadge}
+                      onChange={(v) => setField("verifiedBadge", v)}
+                    />
+                  </Field>
+
+                  <Field label="Priority Placement">
+                    <Toggle
+                      value={form.priorityPlacement}
+                      onChange={(v) => setField("priorityPlacement", v)}
+                    />
+                  </Field>
+
+                  <Field label="Photos Refreshed">
+                    <Toggle
+                      value={form.photosRefreshed}
+                      onChange={(v) => setField("photosRefreshed", v)}
+                    />
+                  </Field>
+
+                  <Field label="Upgraded At">
+                    <p className="text-sm text-gray-700 py-2">
+                      {upgradedAt ? (
+                        formatDate(upgradedAt)
+                      ) : (
+                        <span className="text-gray-400">Not yet upgraded</span>
+                      )}
+                    </p>
+                  </Field>
+
+                  <div className="md:col-span-2">
+                    <Field label="Backlink URL">
+                      <input
+                        type="url"
+                        className={inputCls}
+                        value={form.backlinkUrl}
+                        onChange={(e) => setField("backlinkUrl", e.target.value)}
+                      />
+                    </Field>
+                  </div>
+
+                  <Field label="Pipeline Stage">
+                    <select
+                      className={inputCls}
+                      value={form.pipelineStage}
+                      onChange={(e) =>
+                        setField(
+                          "pipelineStage",
+                          e.target.value as PipelineStage
+                        )
+                      }
+                    >
+                      {PIPELINE_STAGE_ORDER.map((stage) => (
+                        <option key={stage} value={stage}>
+                          {PIPELINE_STAGE_LABEL[stage]}
+                        </option>
+                      ))}
+                    </select>
+                  </Field>
+
+                  <Field label="Last Message Sent">
+                    <select
+                      className={inputCls}
+                      value={form.lastTemplateSent}
+                      onChange={(e) =>
+                        setField("lastTemplateSent", e.target.value)
+                      }
+                    >
+                      <option value="">—</option>
+                      {filteredTemplates.map((t) => (
+                        <option key={t.id} value={t.name}>
+                          {t.name}
+                        </option>
+                      ))}
+                    </select>
+                  </Field>
+                </div>
+
+                <datalist id="business-types-list">
+                  {businessTypeOptions.map((opt) => (
+                    <option key={opt} value={opt} />
+                  ))}
+                </datalist>
+              </>
+            ) : activeTab === "notes" ? (
+              <p className="text-gray-500 text-sm">
+                Notes tab coming in next step.
+              </p>
+            ) : (
+              <p className="text-gray-500 text-sm">
+                Reminder tab coming in next step.
+              </p>
+            )}
+          </div>
+
+          <div className="sticky bottom-0 p-4 border-t flex justify-end gap-2 bg-white rounded-b-xl">
+            <button
+              type="button"
+              onClick={onClose}
+              className="px-4 py-2 rounded-md border border-gray-300 text-sm text-gray-700 hover:bg-gray-50"
+              disabled={saving}
+            >
+              Cancel
+            </button>
+            {leadId && (
+              <button
+                type="button"
+                onClick={handleDelete}
+                className="px-4 py-2 rounded-md border border-red-300 text-sm text-red-600 hover:bg-red-50"
+                disabled={saving}
+              >
+                Delete
+              </button>
+            )}
+            <button
+              type="button"
+              onClick={handleSave}
+              className="px-4 py-2 rounded-md bg-jade text-white text-sm font-medium hover:bg-forest transition disabled:opacity-60"
+              disabled={saving || loading}
+            >
+              {saving ? "Saving…" : "Save Lead"}
+            </button>
+          </div>
+        </div>
+      </div>
+    </>
+  );
+
+  return createPortal(modal, document.body);
+}

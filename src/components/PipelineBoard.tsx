@@ -1,6 +1,7 @@
 "use client";
 
 import { useMemo, useState } from "react";
+import { useRouter } from "next/navigation";
 import type { PipelineStage } from "@prisma/client";
 import {
   PIPELINE_STAGE_LABEL,
@@ -9,6 +10,7 @@ import {
 } from "@/lib/pipeline";
 import { LeadCard } from "./LeadCard";
 import { PipelineSearch } from "./PipelineSearch";
+import { EditLeadModal } from "./EditLeadModal";
 
 type PipelineBoardProps = {
   leads: PipelineLead[];
@@ -65,8 +67,10 @@ function Column({
 }
 
 export function PipelineBoard({ leads }: PipelineBoardProps) {
+  const router = useRouter();
   const [searchQuery, setSearchQuery] = useState("");
-  const [, setSelectedLeadId] = useState<string | null>(null);
+  const [modalOpen, setModalOpen] = useState(false);
+  const [editingLeadId, setEditingLeadId] = useState<string | null>(null);
 
   const byStage = useMemo(() => {
     const q = searchQuery.trim().toLowerCase();
@@ -88,6 +92,17 @@ export function PipelineBoard({ leads }: PipelineBoardProps) {
     return grouped;
   }, [leads, searchQuery]);
 
+  function openLead(id: string) {
+    setEditingLeadId(id);
+    setModalOpen(true);
+  }
+
+  function closeModal() {
+    setModalOpen(false);
+    setEditingLeadId(null);
+    router.refresh();
+  }
+
   return (
     <div className="space-y-4">
       <PipelineSearch value={searchQuery} onChange={setSearchQuery} />
@@ -98,11 +113,17 @@ export function PipelineBoard({ leads }: PipelineBoardProps) {
               key={stage}
               stage={stage}
               leads={byStage[stage] ?? []}
-              onOpen={setSelectedLeadId}
+              onOpen={openLead}
             />
           ))}
         </div>
       </div>
+
+      <EditLeadModal
+        leadId={editingLeadId}
+        open={modalOpen}
+        onClose={closeModal}
+      />
     </div>
   );
 }

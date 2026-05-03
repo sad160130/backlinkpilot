@@ -1,6 +1,7 @@
 import { prisma } from "@/lib/prisma";
 import { StatTile } from "@/components/StatTile";
 import { PipelineBoard } from "@/components/PipelineBoard";
+import { PipelineHeader } from "@/components/PipelineHeader";
 
 export const revalidate = 0;
 
@@ -44,7 +45,7 @@ export default async function PipelinePage() {
 
   return (
     <>
-      <h1 className="text-3xl font-bold text-forest mb-6">Pipeline</h1>
+      <PipelineHeader />
 
       <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-5 gap-4 mb-8">
         <StatTile label="Opportunities" value={opportunities} />
