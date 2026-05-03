@@ -3,9 +3,9 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 import { X, Plus, Trash2 } from "lucide-react";
-import { formatDistanceToNow } from "date-fns";
+import { format, formatDistanceToNow } from "date-fns";
 import { z } from "zod";
-import type { PipelineStage, DohGrade, Note } from "@prisma/client";
+import type { PipelineStage, DohGrade, Note, Reminder } from "@prisma/client";
 import { PIPELINE_STAGE_LABEL, PIPELINE_STAGE_ORDER } from "@/lib/pipeline";
 import {
   BUSINESS_TYPE_SUGGESTIONS,
@@ -24,6 +24,17 @@ import {
   deleteNote,
   getNotesForLead,
 } from "@/app/actions/notes";
+import {
+  deleteReminder,
+  getActiveReminderForLead,
+  markReminderDone,
+  upsertReminder,
+} from "@/app/actions/reminders";
+import {
+  fromDateInputValue,
+  nextBusinessDay,
+  toDateInputValue,
+} from "@/lib/dates";
 
 type EditLeadModalProps = {
   leadId: string | null;
@@ -316,6 +327,214 @@ function NotesTab({ leadId }: { leadId: string }) {
           ))}
         </div>
       )}
+    </div>
+  );
+}
+
+function ReminderTab({ leadId }: { leadId: string }) {
+  const [active, setActive] = useState<Reminder | null>(null);
+  const [dateValue, setDateValue] = useState("");
+  const [labelValue, setLabelValue] = useState("");
+  const [loading, setLoading] = useState(true);
+  const [busy, setBusy] = useState(false);
+  const [err, setErr] = useState<string | null>(null);
+
+  const refresh = useCallback(async () => {
+    try {
+      const fresh = await getActiveReminderForLead(leadId);
+      setActive(fresh);
+      if (fresh) {
+        setDateValue(toDateInputValue(new Date(fresh.dueDate)));
+        setLabelValue(fresh.label ?? "");
+      } else {
+        setDateValue("");
+        setLabelValue("");
+      }
+    } catch (e) {
+      setErr(e instanceof Error ? e.message : "Failed to load reminder");
+    }
+  }, [leadId]);
+
+  useEffect(() => {
+    let cancelled = false;
+    setLoading(true);
+    (async () => {
+      try {
+        const fresh = await getActiveReminderForLead(leadId);
+        if (cancelled) return;
+        setActive(fresh);
+        if (fresh) {
+          setDateValue(toDateInputValue(new Date(fresh.dueDate)));
+          setLabelValue(fresh.label ?? "");
+        } else {
+          setDateValue("");
+          setLabelValue("");
+        }
+      } catch (e) {
+        if (!cancelled) {
+          setErr(e instanceof Error ? e.message : "Failed to load reminder");
+        }
+      } finally {
+        if (!cancelled) setLoading(false);
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [leadId]);
+
+  async function handleSave() {
+    if (!dateValue) return;
+    setBusy(true);
+    try {
+      await upsertReminder({
+        leadId,
+        dueDate: fromDateInputValue(dateValue),
+        label: labelValue.trim() || null,
+      });
+      setErr(null);
+      await refresh();
+    } catch (e) {
+      setErr(e instanceof Error ? e.message : "Failed to save reminder");
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  async function handleMarkDone() {
+    if (!active) return;
+    setBusy(true);
+    try {
+      await markReminderDone(active.id);
+      setErr(null);
+      await refresh();
+    } catch (e) {
+      setErr(e instanceof Error ? e.message : "Failed to mark reminder done");
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  async function handleDelete() {
+    if (!active) return;
+    if (!window.confirm("Delete this reminder?")) return;
+    setBusy(true);
+    try {
+      await deleteReminder(active.id);
+      setErr(null);
+      await refresh();
+    } catch (e) {
+      setErr(e instanceof Error ? e.message : "Failed to delete reminder");
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  if (loading) {
+    return <p className="text-sm text-gray-500">Loading…</p>;
+  }
+
+  return (
+    <div className="space-y-4">
+      {active && (
+        <div className="bg-jade/5 border border-jade/20 rounded-lg p-3 mb-4">
+          <p className="text-sm">
+            <span className="font-medium text-forest">Active reminder:</span>{" "}
+            <span className="text-gray-700">
+              {format(new Date(active.dueDate), "EEEE, MMMM d, yyyy")}
+            </span>
+          </p>
+          {active.label && (
+            <p className="text-sm text-gray-600 mt-1">&quot;{active.label}&quot;</p>
+          )}
+        </div>
+      )}
+
+      {err && (
+        <div className="rounded-md border border-red-300 bg-red-50 px-3 py-2 text-sm text-red-700">
+          {err}
+        </div>
+      )}
+
+      <div>
+        <span className="block text-xs font-medium uppercase tracking-wide text-gray-500 mb-1">
+          Due Date
+        </span>
+        <div className="flex items-center gap-2">
+          <input
+            type="date"
+            className={inputCls}
+            value={dateValue}
+            onChange={(e) => setDateValue(e.target.value)}
+          />
+          <button
+            type="button"
+            onClick={() => setDateValue(toDateInputValue(nextBusinessDay()))}
+            className="px-3 py-2 rounded-md border border-gray-300 text-sm text-gray-700 hover:bg-gray-50 whitespace-nowrap"
+          >
+            Next Biz Day
+          </button>
+          <button
+            type="button"
+            onClick={() => setDateValue("")}
+            className="p-2 rounded-md border border-gray-300 text-gray-400 hover:bg-gray-50 hover:text-gray-600"
+            aria-label="Clear date"
+          >
+            <X className="h-4 w-4" />
+          </button>
+        </div>
+      </div>
+
+      <div>
+        <span className="block text-xs font-medium uppercase tracking-wide text-gray-500 mb-1">
+          Label
+        </span>
+        <input
+          type="text"
+          className={inputCls}
+          placeholder="What's this reminder for? (optional)"
+          value={labelValue}
+          onChange={(e) => setLabelValue(e.target.value)}
+        />
+        <p className="text-xs text-gray-500 mt-1">
+          Set a date to follow up with this lead. The Reminders Due widget on
+          the dashboard counts every lead with a pending reminder. When the
+          date arrives or passes, you&apos;ll see a toast notification on next
+          sync — and the lead card will be highlighted with a purple ring on
+          the pipeline.
+        </p>
+      </div>
+
+      <div className="flex gap-2 justify-end">
+        {active && (
+          <button
+            type="button"
+            onClick={handleDelete}
+            disabled={busy}
+            className="px-4 py-2 rounded-md border border-red-300 text-sm text-red-600 hover:bg-red-50 disabled:opacity-60"
+          >
+            Delete Reminder
+          </button>
+        )}
+        {active && (
+          <button
+            type="button"
+            onClick={handleMarkDone}
+            disabled={busy}
+            className="px-4 py-2 rounded-md border border-gray-300 text-sm text-gray-700 hover:bg-gray-50 disabled:opacity-60"
+          >
+            Mark Done
+          </button>
+        )}
+        <button
+          type="button"
+          onClick={handleSave}
+          disabled={busy || !dateValue}
+          className="bg-jade text-white px-4 py-2 rounded-md text-sm font-medium hover:bg-forest transition disabled:opacity-50 disabled:cursor-not-allowed"
+        >
+          Save Reminder
+        </button>
+      </div>
     </div>
   );
 }
@@ -938,9 +1157,11 @@ export function EditLeadModal({ leadId, open, onClose }: EditLeadModalProps) {
                   Save the lead first before adding notes.
                 </p>
               )
+            ) : leadId ? (
+              <ReminderTab leadId={leadId} />
             ) : (
               <p className="text-gray-500 text-sm">
-                Reminder tab coming in next step.
+                Save the lead first before setting a reminder.
               </p>
             )}
           </div>
