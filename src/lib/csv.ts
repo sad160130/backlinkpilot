@@ -1,6 +1,8 @@
 import Papa from "papaparse";
 import { DohGrade } from "@prisma/client";
 
+const SITE_URL = "https://www.eatrealfoodnyc.com";
+
 export type RawCsvRow = Record<string, string>;
 
 export type CleanedRow = {
@@ -20,10 +22,17 @@ export type CleanedRow = {
   googleReviewCount: number | null;
 };
 
+export type DetectedFormat =
+  | "backlinkpilot"
+  | "erf-raw"
+  | "mixed"
+  | "unknown";
+
 export type ParseResult = {
   rows: CleanedRow[];
   totalRowsInCsv: number;
   headersFound: string[];
+  detectedFormat: DetectedFormat;
 };
 
 const trim = (v: string | undefined | null): string | null => {
@@ -96,6 +105,59 @@ const parseIntSafe = (
   return Math.max(n, min);
 };
 
+// Prefer the BacklinkPilot column name; fall back to the ERF NYC raw name.
+const pick = (
+  raw: RawCsvRow,
+  primary: string,
+  fallback?: string
+): string | undefined => {
+  const p = raw[primary];
+  if (p != null && String(p).trim() !== "") return p;
+  if (fallback) {
+    const f = raw[fallback];
+    if (f != null && String(f).trim() !== "") return f;
+  }
+  return undefined;
+};
+
+function resolveListingUrl(raw: RawCsvRow): string | null {
+  const direct = parseUrl(raw.listingUrl);
+  if (direct) return direct;
+  const slug = trim(raw.slug);
+  if (slug) return `${SITE_URL}/restaurants/${slug}`;
+  return null;
+}
+
+function detectFormat(headers: string[]): DetectedFormat {
+  const set = new Set(headers);
+  if (set.has("businessName")) return "backlinkpilot";
+  if (set.has("name") && set.has("slug")) return "erf-raw";
+  if (set.has("name")) return "mixed";
+  return "unknown";
+}
+
+function isEmptyRow(row: CleanedRow): boolean {
+  if (row.businessName.trim() !== "") return false;
+  if (
+    row.instagramUrl ||
+    row.websiteUrl ||
+    row.listingUrl ||
+    row.city ||
+    row.neighborhood ||
+    row.businessType ||
+    row.contactEmail ||
+    row.phone ||
+    row.address ||
+    row.googleRating != null ||
+    row.googleReviewCount != null ||
+    row.dohGrade ||
+    row.dietaryTags.length > 0
+  ) {
+    return false;
+  }
+  return true;
+}
+
 export function parseCsv(csvText: string): ParseResult {
   const result = Papa.parse<RawCsvRow>(csvText, {
     header: true,
@@ -103,26 +165,32 @@ export function parseCsv(csvText: string): ParseResult {
     transformHeader: (h) => h.trim(),
   });
 
-  const rows: CleanedRow[] = result.data.map((raw) => ({
-    businessName: trim(raw.businessName) ?? "",
-    instagramUrl: parseUrl(raw.instagramUrl),
-    websiteUrl: parseUrl(raw.websiteUrl),
-    listingUrl: parseUrl(raw.listingUrl),
-    city: trim(raw.city),
-    neighborhood: trim(raw.neighborhood),
-    businessType: trim(raw.businessType),
-    dietaryTags: parseDietaryTags(raw.dietaryTags),
-    dohGrade: parseDohGrade(raw.dohGrade),
-    contactEmail: parseFirstEmail(raw.contactEmail),
-    phone: parsePhone(raw.phone),
-    address: trim(raw.address),
-    googleRating: parseFloatSafe(raw.googleRating, 0, 5),
-    googleReviewCount: parseIntSafe(raw.googleReviewCount, 0),
-  }));
+  const rows: CleanedRow[] = result.data
+    .map<CleanedRow>((raw) => ({
+      businessName: trim(pick(raw, "businessName", "name")) ?? "",
+      instagramUrl: parseUrl(pick(raw, "instagramUrl", "company_instagram")),
+      websiteUrl: parseUrl(pick(raw, "websiteUrl", "website")),
+      listingUrl: resolveListingUrl(raw),
+      city: trim(pick(raw, "city", "borough")),
+      neighborhood: trim(pick(raw, "neighborhood", "neighborhood")),
+      businessType: trim(pick(raw, "businessType", "type")),
+      dietaryTags: parseDietaryTags(pick(raw, "dietaryTags", "dietary_tags")),
+      dohGrade: parseDohGrade(pick(raw, "dohGrade", "inspection_grade")),
+      contactEmail: parseFirstEmail(pick(raw, "contactEmail", "email")),
+      phone: parsePhone(pick(raw, "phone", "phone")),
+      address: trim(pick(raw, "address", "address")),
+      googleRating: parseFloatSafe(pick(raw, "googleRating", "rating"), 0, 5),
+      googleReviewCount: parseIntSafe(
+        pick(raw, "googleReviewCount", "reviews"),
+        0
+      ),
+    }))
+    .filter((row) => !isEmptyRow(row));
 
   return {
     rows,
     totalRowsInCsv: result.data.length,
     headersFound: result.meta.fields ?? [],
+    detectedFormat: detectFormat(result.meta.fields ?? []),
   };
 }

@@ -4,7 +4,7 @@ import { useEffect, useState } from "react";
 import { createPortal } from "react-dom";
 import { X, Upload, ChevronDown, ChevronRight } from "lucide-react";
 import { useRouter } from "next/navigation";
-import { parseCsv, type CleanedRow } from "@/lib/csv";
+import { parseCsv, type CleanedRow, type DetectedFormat } from "@/lib/csv";
 import { bulkImportLeads, type ImportSummary } from "@/app/actions/import";
 
 type Phase = "input" | "preview" | "importing" | "done";
@@ -41,9 +41,13 @@ export function BulkImportModal({
   const [csvText, setCsvText] = useState("");
   const [parsedRows, setParsedRows] = useState<CleanedRow[]>([]);
   const [headers, setHeaders] = useState<string[]>([]);
+  const [detectedFormat, setDetectedFormat] =
+    useState<DetectedFormat>("unknown");
   const [summary, setSummary] = useState<ImportSummary | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [helpOpen, setHelpOpen] = useState(false);
+  const [fileName, setFileName] = useState<string | null>(null);
+  const [fileSize, setFileSize] = useState(0);
 
   useEffect(() => {
     setMounted(true);
@@ -53,10 +57,30 @@ export function BulkImportModal({
     setCsvText("");
     setParsedRows([]);
     setHeaders([]);
+    setDetectedFormat("unknown");
     setSummary(null);
     setError(null);
     setHelpOpen(false);
+    setFileName(null);
+    setFileSize(0);
     setPhase("input");
+  }
+
+  async function handleFileChange(e: React.ChangeEvent<HTMLInputElement>) {
+    const file = e.target.files?.[0];
+    if (!file) return;
+
+    setFileName(file.name);
+    setFileSize(file.size);
+    setError(null);
+
+    try {
+      const text = await file.text();
+      setCsvText(text);
+      e.target.value = "";
+    } catch {
+      setError("Failed to read file. Make sure it's a valid CSV.");
+    }
   }
 
   function handleClose() {
@@ -77,6 +101,7 @@ export function BulkImportModal({
       }
       setParsedRows(result.rows);
       setHeaders(result.headersFound);
+      setDetectedFormat(result.detectedFormat);
       setPhase("preview");
     } catch (err) {
       setError(err instanceof Error ? err.message : "Failed to parse CSV");
@@ -132,11 +157,31 @@ export function BulkImportModal({
             )}
 
             {phase === "input" && (
-              <>
+              <div className="space-y-3">
                 <p className="text-sm text-gray-600">
-                  Paste your CSV content below. The first row must be a header
-                  row. See &quot;Help&quot; below for the SQL export query.
+                  Upload a CSV file or paste CSV content below.
                 </p>
+
+                <div className="flex items-center gap-3">
+                  <label className="inline-flex items-center gap-2 px-4 py-2 bg-jade text-white rounded-md text-sm font-medium hover:bg-forest cursor-pointer transition">
+                    <Upload className="h-4 w-4" />
+                    Choose CSV File
+                    <input
+                      type="file"
+                      accept=".csv,text/csv"
+                      className="hidden"
+                      onChange={handleFileChange}
+                    />
+                  </label>
+                  {fileName && (
+                    <span className="text-sm text-gray-600">
+                      {fileName} ({(fileSize / 1024).toFixed(1)} KB)
+                    </span>
+                  )}
+                </div>
+
+                <p className="text-xs text-gray-500">— or —</p>
+
                 <textarea
                   value={csvText}
                   onChange={(e) => setCsvText(e.target.value)}
@@ -172,7 +217,7 @@ export function BulkImportModal({
                     </div>
                   )}
                 </div>
-              </>
+              </div>
             )}
 
             {phase === "preview" && (
@@ -183,6 +228,25 @@ export function BulkImportModal({
                   </span>{" "}
                   Preview of the first 5 rows below. Click Import to commit.
                 </p>
+                <p className="text-xs text-gray-500">
+                  Detected format:{" "}
+                  <span className="font-medium">
+                    {detectedFormat === "backlinkpilot"
+                      ? "BacklinkPilot CSV"
+                      : detectedFormat === "erf-raw"
+                      ? "ERF NYC raw export"
+                      : detectedFormat === "mixed"
+                      ? "Mixed (some unknown columns)"
+                      : "Unknown format — check column names"}
+                  </span>
+                </p>
+                {detectedFormat === "unknown" && (
+                  <div className="bg-amber/10 border border-amber/30 rounded-md p-3 text-xs text-amber">
+                    No recognized header columns found. Make sure your CSV has
+                    either &quot;businessName&quot; or &quot;name&quot; as a
+                    column header.
+                  </div>
+                )}
                 <p className="text-xs text-gray-500">
                   Headers detected: {headers.join(", ")}
                 </p>
