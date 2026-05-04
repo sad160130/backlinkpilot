@@ -3,7 +3,7 @@
 import { useEffect, useMemo, useState } from "react";
 import { useRouter } from "next/navigation";
 import { useDeferredValue } from "react";
-import { Search, ChevronDown, ChevronUp, ArrowUp, ArrowDown } from "lucide-react";
+import { Search, ChevronDown, ChevronUp, ArrowUp, ArrowDown, Upload } from "lucide-react";
 import { formatDistanceToNow } from "date-fns";
 import type { DohGrade, Lead, PipelineStage } from "@prisma/client";
 import {
@@ -21,6 +21,7 @@ import {
   type SortKey,
 } from "@/lib/lead-filters";
 import { EditLeadModal } from "./EditLeadModal";
+import { BulkImportModal } from "./BulkImportModal";
 
 type LeadReminderLite = {
   id: string;
@@ -75,6 +76,7 @@ export function AllLeadsTable({ leads }: AllLeadsTableProps) {
   const [page, setPage] = useState(0);
   const [modalOpen, setModalOpen] = useState(false);
   const [editingLeadId, setEditingLeadId] = useState<string | null>(null);
+  const [importOpen, setImportOpen] = useState(false);
 
   const deferredFilters = useDeferredValue(filters);
 
@@ -163,6 +165,14 @@ export function AllLeadsTable({ leads }: AllLeadsTableProps) {
           </button>
           <button
             type="button"
+            onClick={() => setImportOpen(true)}
+            className="border border-gray-300 px-3 py-1.5 rounded-md text-sm hover:bg-gray-50 flex items-center gap-2"
+          >
+            <Upload className="h-4 w-4" />
+            Bulk Import CSV
+          </button>
+          <button
+            type="button"
             onClick={() => {
               setEditingLeadId(null);
               setModalOpen(true);
@@ -193,6 +203,14 @@ export function AllLeadsTable({ leads }: AllLeadsTableProps) {
         leadId={editingLeadId}
         open={modalOpen}
         onClose={closeModal}
+      />
+
+      <BulkImportModal
+        open={importOpen}
+        onClose={() => {
+          setImportOpen(false);
+          router.refresh();
+        }}
       />
     </div>
   );
