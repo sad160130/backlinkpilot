@@ -1,8 +1,6 @@
 import { prisma } from "@/lib/prisma";
 import { AllLeadsTable } from "@/components/AllLeadsTable";
 
-export const revalidate = 0;
-
 export default async function AllLeadsPage() {
   const leads = await prisma.lead.findMany({
     include: {

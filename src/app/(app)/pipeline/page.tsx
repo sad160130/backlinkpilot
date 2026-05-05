@@ -5,8 +5,6 @@ import { PipelineBoard } from "@/components/PipelineBoard";
 import { PipelineHeader } from "@/components/PipelineHeader";
 import type { PipelineStage } from "@prisma/client";
 
-export const revalidate = 0;
-
 const ACTIVE_STAGES: PipelineStage[] = [
   "REACH_OUT_1",
   "UPGRADE_APPROVED",

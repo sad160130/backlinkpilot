@@ -6,6 +6,8 @@ import { prisma } from "@/lib/prisma";
 import { HeaderBell } from "@/components/HeaderBell";
 import { ReminderSync } from "@/components/ReminderSync";
 
+export const dynamic = "force-dynamic";
+
 export default async function AppLayout({
   children,
 }: {
