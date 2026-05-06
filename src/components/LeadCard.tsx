@@ -4,6 +4,7 @@ import { AlertTriangle, CheckCircle2, Mail } from "lucide-react";
 import { useDraggable } from "@dnd-kit/core";
 import { CSS } from "@dnd-kit/utilities";
 import { parseInstagramHandle } from "@/lib/pipeline";
+import { UpdatedAtBadge } from "./UpdatedAtBadge";
 
 function InstagramIcon({ className }: { className?: string }) {
   return (
@@ -37,6 +38,7 @@ type LeadCardProps = {
     googleReviewCount: number | null;
     verifiedBadge: boolean;
     ownerTag: string;
+    updatedAt: Date;
     reminders: { id: string; status: "PENDING" | "DONE" | "SNOOZED"; dueDate: Date }[];
   };
   onOpen?: (leadId: string) => void;
@@ -137,6 +139,10 @@ export function LeadCard({ lead, onOpen }: LeadCardProps) {
           ⭐ {lead.googleRating.toFixed(1)} ({lead.googleReviewCount?.toLocaleString() ?? 0})
         </div>
       )}
+
+      <div className="flex justify-end mt-2 pt-2 border-t border-gray-100">
+        <UpdatedAtBadge date={lead.updatedAt} />
+      </div>
     </button>
   );
 }
