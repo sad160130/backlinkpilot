@@ -45,6 +45,7 @@ export default async function PipelinePage({
         reminders: {
           where: { status: "PENDING" },
           select: { id: true, status: true, dueDate: true },
+          orderBy: { dueDate: "asc" },
         },
       },
       orderBy: [

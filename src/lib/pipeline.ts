@@ -60,6 +60,8 @@ export type PipelineLead = {
   verifiedBadge: boolean;
   ownerTag: string;
   pipelineStage: PipelineStage;
+  lastTemplateSent: string | null;
+  lastSentAt: Date | null;
   updatedAt: Date;
   reminders: PipelineReminder[];
 };
